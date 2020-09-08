@@ -1,0 +1,9 @@
+    {
+      "Effect": "Allow",
+      "Action": [
+        "sqs:*"
+      ],
+      "Resource": [
+        "arn:aws:sqs:*:*:{{tenant}}_queue"
+      ]
+    }

@@ -1,0 +1,109 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: AWS SaaS Factory Policy Engine Users and Roles for Proofs
+Parameters:
+  MultiTenantS3Bucket:
+    Description: S3 bucket where you are storing your tenant folders
+    Type: String
+Resources:
+  AssumingUser1:
+    Description: User with no provided permissions.
+    Type: AWS::IAM::User
+    Properties:
+      Policies:
+        - PolicyName: inline-user-assume-role
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                Resource: '*'
+      UserName: assuming-user-1
+  AssumingUser1AccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName:
+        !Ref AssumingUser1
+  IamAuthRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: role-for-assuming-policies
+      Path: '/'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub ${AWS::StackName}-s3-tenant-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Sub arn:aws:s3:::${MultiTenantS3Bucket}
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub arn:aws:s3:::${MultiTenantS3Bucket}/*
+        - PolicyName: !Sub ${AWS::StackName}-dynamo-tenant-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:BatchGetItem
+                  - dynamodb:Query
+                  - dynamodb:DescribeTable
+                Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/*
+        - PolicyName: !Sub ${AWS::StackName}-sqs-tenant-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:DeleteMessageBatch
+                  - sqs:SendMessageBatch
+                  - sqs:SendMessage
+                  - sqs:ReceiveMessage
+                Resource: !Sub arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:*
+        - PolicyName: !Sub ${AWS::StackName}-secretsmanager-tenant-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*
+        - PolicyName: !Sub ${AWS::StackName}-parameter-store-tenant-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameters
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter:*
+        - PolicyName: !Sub ${AWS::StackName}-efs-tenant-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticfilesystem:DescribeAccessPoints
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                Resource: !Sub arn:aws:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:access-point:*
+Outputs:
+  AccessKey:
+    Value: !Ref AssumingUser1AccessKey
+    Description: AWSAccessKeyId of new user
+  SecretKey:
+    Value: !GetAtt AssumingUser1AccessKey.SecretAccessKey
+    Description: AWSSecretAccessKey of new user

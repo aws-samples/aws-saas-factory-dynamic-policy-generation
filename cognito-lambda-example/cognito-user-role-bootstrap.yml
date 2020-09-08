@@ -1,0 +1,492 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: AWS SaaS Factory Lambda Role Setup
+Parameters:
+  DeploymentS3Bucket:
+    Description: Deployment S3 bucket where you uploaded the Lambda code packages
+    Type: String
+  MultiTenantS3Bucket:
+    Description: S3 bucket we will create to test tenant folders
+    Type: String
+  DynamoTableName:
+    Description: Dynamo table we will create to test multi-tenant storage
+    Type: String
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref MultiTenantS3Bucket
+  DynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: "tenant"
+          AttributeType: "S"
+        - AttributeName: "name"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "tenant"
+          KeyType: "HASH"
+        - AttributeName: "name"
+          KeyType: "RANGE"
+      ProvisionedThroughput:
+        ReadCapacityUnits: "1"
+        WriteCapacityUnits: "1"
+      TableName: !Ref DynamoTableName
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub ${AWS::StackName}-users
+      MfaConfiguration: "OFF"
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+          TemporaryPasswordValidityDays: 7
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      Schema:
+        - Name: tenant_id
+          AttributeDataType: String
+          Mutable: false
+        - Name: identity_pool
+          AttributeDataType: String
+          Mutable: false
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub ${AWS::StackName}-client-app
+      UserPoolId: !Ref UserPool
+      SupportedIdentityProviders:
+        - COGNITO
+      ExplicitAuthFlows:
+        - ALLOW_ADMIN_USER_PASSWORD_AUTH
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      GenerateSecret: false
+  IdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Sub ${AWS::StackName}-identities
+      AllowClassicFlow: true
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId: !Ref UserPoolClient
+          ProviderName: !Sub cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}
+          ServerSideTokenCheck: true
+  IdentityPoolRoles:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    DependsOn: IdentityPoolAuthRole
+    Properties:
+      IdentityPoolId: !Ref IdentityPool
+      Roles:
+        authenticated: !GetAtt IdentityPoolAuthRole.Arn
+  IdentityPoolAuthRole:
+    Type: AWS::IAM::Role
+    DependsOn:
+      - IdentityPool
+    Properties:
+      RoleName: cognito-auth-role
+      Path: '/'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal: {"Federated": "cognito-identity.amazonaws.com"}
+            Action:
+              - sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                cognito-identity.amazonaws.com:aud:
+                  - !Ref IdentityPool
+              ForAnyValue:StringLike: {"cognito-identity.amazonaws.com:amr": authenticated}
+      Policies:
+        - PolicyName: !Sub ${AWS::StackName}-S3-tenant-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Sub arn:aws:s3:::${MultiTenantS3Bucket}
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub arn:aws:s3:::${MultiTenantS3Bucket}/*
+        - PolicyName: !Sub ${AWS::StackName}-dynamo-tenant-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:BatchGetItem
+                  - dynamodb:Query
+                  - dynamodb:DescribeTable
+                Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/*
+        - PolicyName: !Sub ${AWS::StackName}-sqs-tenant-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:DeleteMessageBatch
+                  - sqs:SendMessageBatch
+                  - sqs:SendMessage
+                  - sqs:ReceiveMessage
+                Resource: !Sub arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:*
+        - PolicyName: !Sub ${AWS::StackName}-secretsmanager-tenant-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: lambda-execution-role
+      Path: '/'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: lambda-execution-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:PutLogEvents
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*
+              - Effect: Allow
+                Action:
+                  - logs:DescribeLogStreams
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*
+              - Effect: Allow
+                Action:
+                  - cognito-identity:GetIdentityPoolRoles
+                Resource:
+                  - !Sub arn:aws:cognito-identity:${AWS::Region}:${AWS::AccountId}:identitypool/*
+  IamAuthRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: lambda-role-for-assuming-policies
+      Path: '/'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !GetAtt LambdaExecutionRole.Arn
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub ${AWS::StackName}-s3-tenant-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Sub arn:aws:s3:::${MultiTenantS3Bucket}
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub arn:aws:s3:::${MultiTenantS3Bucket}/*
+        - PolicyName: !Sub ${AWS::StackName}-dynamo-tenant-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:BatchGetItem
+                  - dynamodb:Query
+                  - dynamodb:DescribeTable
+                Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/*
+        - PolicyName: !Sub ${AWS::StackName}-sqs-tenant-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:DeleteMessageBatch
+                  - sqs:SendMessageBatch
+                  - sqs:SendMessage
+                  - sqs:ReceiveMessage
+                Resource: !Sub arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:*
+        - PolicyName: !Sub ${AWS::StackName}-secretsmanager-tenant-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*
+        - PolicyName: !Sub ${AWS::StackName}-efs-tenant-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticfilesystem:DescribeAccessPoints
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                Resource: !Sub arn:aws:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:access-point:*
+  HttpApi:
+    Type: 'AWS::ApiGatewayV2::Api'
+    Properties:
+      Name: dev-cognito-lambda-example
+      ProtocolType: HTTP
+  HttpApiLogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub /aws/http-api/${AWS::StackName}
+  HttpApiStage:
+    Type: 'AWS::ApiGatewayV2::Stage'
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: $default
+      AutoDeploy: true
+      AccessLogSettings:
+        DestinationArn: !GetAtt
+          - HttpApiLogGroup
+          - Arn
+        Format: >-
+          {{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength"}}
+    DependsOn: HttpApiLogGroup
+  HttpApiPermissionJwtSimpleFlow:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !GetAtt JwtSimpleFlowHandlerLambdaFunction.Arn
+      Action: 'lambda:InvokeFunction'
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Join
+        - ''
+        - - 'arn:'
+          - !Ref 'AWS::Partition'
+          - ':execute-api:'
+          - !Ref 'AWS::Region'
+          - ':'
+          - !Ref 'AWS::AccountId'
+          - ':'
+          - !Ref HttpApi
+          - /*
+  HttpApiPermissionCognitoIdentityPool:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !GetAtt CognitoIdentityPoolHandlerLambdaFunction.Arn
+      Action: 'lambda:InvokeFunction'
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Join
+        - ''
+        - - 'arn:'
+          - !Ref 'AWS::Partition'
+          - ':execute-api:'
+          - !Ref 'AWS::Region'
+          - ':'
+          - !Ref 'AWS::AccountId'
+          - ':'
+          - !Ref HttpApi
+          - /*
+  HttpApiPermissionApiGatewayAuthPool:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !GetAtt ApiGatewayAuthorizedLambdaFunction.Arn
+      Action: 'lambda:InvokeFunction'
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Join
+        - ''
+        - - 'arn:'
+          - !Ref 'AWS::Partition'
+          - ':execute-api:'
+          - !Ref 'AWS::Region'
+          - ':'
+          - !Ref 'AWS::AccountId'
+          - ':'
+          - !Ref HttpApi
+          - /*
+  HttpApiIntegrationCognitoIdentityPool:
+    Type: 'AWS::ApiGatewayV2::Integration'
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt CognitoIdentityPoolHandlerLambdaFunction.Arn
+      PayloadFormatVersion: '1.0'
+      TimeoutInMillis: 30000
+  HttpApiIntegrationJwtSimpleFlow:
+    Type: 'AWS::ApiGatewayV2::Integration'
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt JwtSimpleFlowHandlerLambdaFunction.Arn
+      PayloadFormatVersion: '1.0'
+      TimeoutInMillis: 30000
+  HttpApiIntegrationApiGatewayAuth:
+    Type: 'AWS::ApiGatewayV2::Integration'
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ApiGatewayAuthorizedLambdaFunction.Arn
+      PayloadFormatVersion: '1.0'
+      TimeoutInMillis: 30000
+  HttpApiRouteGetJwtSimpleFlow:
+    Type: 'AWS::ApiGatewayV2::Route'
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /jwt-simple-flow
+      Target: !Join
+        - /
+        - - integrations
+          - !Ref HttpApiIntegrationJwtSimpleFlow
+    DependsOn: HttpApiIntegrationJwtSimpleFlow
+  HttpApiRouteGetCognitoIdentityPool:
+    Type: 'AWS::ApiGatewayV2::Route'
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /cognito-identity
+      Target: !Join
+        - /
+        - - integrations
+          - !Ref HttpApiIntegrationCognitoIdentityPool
+    DependsOn: HttpApiIntegrationCognitoIdentityPool
+  HttpApiRouteGetApiGateway:
+    Type: 'AWS::ApiGatewayV2::Route'
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /api-gateway-auth
+      AuthorizationType: JWT
+      AuthorizerId: !Ref HttpApiAuthorizerServiceAuthorizer
+      Target: !Join
+        - /
+        - - integrations
+          - !Ref HttpApiIntegrationApiGatewayAuth
+    DependsOn: HttpApiIntegrationApiGatewayAuth
+  HttpApiAuthorizerServiceAuthorizer:
+    Type: 'AWS::ApiGatewayV2::Authorizer'
+    Properties:
+      ApiId: !Ref HttpApi
+      AuthorizerType: JWT
+      IdentitySource:
+        - $request.header.Authorization
+      JwtConfiguration:
+        Audience:
+          - !Ref UserPoolClient
+        Issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}
+      Name: serviceAuthorizer
+  ApiGatewayAuthorizedLambdaFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: IamAuthRole
+    Properties:
+      ReservedConcurrentExecutions: 1
+      Runtime: java11
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref MultiTenantS3Bucket
+          DB_TABLE: !Ref DynamoTableName
+          ROLE: !GetAtt IamAuthRole.Arn
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Handler: com.amazon.aws.partners.saasfactory.ApiGatewayAuthorizedHandler
+      Timeout: 30
+      MemorySize: 1024
+      Code:
+        S3Bucket: !Ref DeploymentS3Bucket
+        S3Key: cognito-lambda-example.jar
+      Layers:
+        - !Ref TokenVendingLambdaLayer
+  JwtSimpleFlowHandlerLambdaFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: IamAuthRole
+    Properties:
+      ReservedConcurrentExecutions: 1
+      Runtime: java11
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref MultiTenantS3Bucket
+          DB_TABLE: !Ref DynamoTableName
+          ROLE: !GetAtt IamAuthRole.Arn
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Handler: com.amazon.aws.partners.saasfactory.JwtSimpleFlowHandler
+      Timeout: 30
+      MemorySize: 1024
+      Code:
+        S3Bucket: !Ref DeploymentS3Bucket
+        S3Key: cognito-lambda-example.jar
+      Layers:
+        - !Ref TokenVendingLambdaLayer
+  CognitoIdentityPoolHandlerLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      ReservedConcurrentExecutions: 1
+      Runtime: java11
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref MultiTenantS3Bucket
+          DB_TABLE: !Ref DynamoTableName
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Handler: com.amazon.aws.partners.saasfactory.CognitoIdentityPoolHandler
+      Timeout: 30
+      MemorySize: 1024
+      Code:
+        S3Bucket: !Ref DeploymentS3Bucket
+        S3Key: cognito-lambda-example.jar
+      Layers:
+        - !Ref TokenVendingLambdaLayer
+  TokenVendingLambdaLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: token-vending-layer
+      Description: Token Vendor Layer
+      Content:
+        S3Bucket: !Ref DeploymentS3Bucket
+        S3Key: token-vending-layer.jar
+      CompatibleRuntimes:
+        - java11
+Outputs:
+  UserPool:
+    Description: User Pool Id
+    Value: !Ref UserPool
+  UserPoolClient:
+    Description: User Pool Client Id
+    Value: !Ref UserPoolClient
+  IdentityPool:
+    Description: Identity Pool Id
+    Value: !Ref IdentityPool
+  HttpApiUrl:
+    Description: URL of the HTTP API
+    Value: !Join
+      - ''
+      - - 'https://'
+        - !Ref HttpApi
+        - .execute-api.
+        - !Ref 'AWS::Region'
+        - .
+        - !Ref 'AWS::URLSuffix'
+  MultiTenantS3Bucket:
+    Description: S3 bucket where you are storing your tenant folders
+    Value: !Ref MultiTenantS3Bucket
+  DynamoTableName:
+    Description: Dynamo table we are using to test multi-tenant storage
+    Value: !Ref DynamoTableName

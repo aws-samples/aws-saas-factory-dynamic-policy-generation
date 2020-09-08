@@ -1,0 +1,14 @@
+    {
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:*"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:*:*:table/{{table}}"
+      ],
+      "Condition": {
+        "ForAllValues:StringEquals": {
+          "dynamodb: LeadingKeys": [ "{{tenant}}" ]
+        }
+      }
+    }

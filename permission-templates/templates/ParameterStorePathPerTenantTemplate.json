@@ -1,0 +1,9 @@
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter"
+      ],
+      "Resource": [
+        "arn:aws:ssm:*:*:parameter/{{tenant_path}}"
+      ]
+    }
