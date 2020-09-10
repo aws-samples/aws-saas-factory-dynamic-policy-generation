@@ -35,7 +35,7 @@ This diagram shows JWT verification and claims extraction implemented in our cod
 
 This diagram shows JWT verification and claims extraction implemented as a JWT Authenticator in the API Gateway.
 
-<p><kbd><img width=994 height=249 src="./images/API Gateway Authorizer Flow.png" alt="API Gateway Authorizer Flow"/></kbd></p>
+<p><kbd><img width=990 height=240 src="./images/API Gateway Authorizer Flow.png" alt="API Gateway Authorizer Flow"/></kbd></p>
 
 This diagram shows JWT verification and claims extraction implemented in our code, as well utilizing a Cognito 
 Identity Pool to retrieve a role.
