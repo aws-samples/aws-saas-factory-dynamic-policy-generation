@@ -17,6 +17,7 @@
 
 package com.amazon.aws.partners.saasfactory.token;
 
+import com.amazon.aws.partners.saasfactory.exception.PolicyAssumptionException;
 import com.amazon.aws.partners.saasfactory.policy.PolicyGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,15 +37,14 @@ public class TokenVendor {
     private static final Logger LOGGER = LoggerFactory.getLogger(TokenVendor.class);
 
     private final StsClient sts;
-    private String role;
-    private Region region;
-    private int durationSeconds;
-    private PolicyGenerator policyGenerator;
+    private final String role;
+    private final int durationSeconds;
+    private final PolicyGenerator policyGenerator;
 
     public TokenVendor(TokenVendorBuilder builder) {
         this.durationSeconds = builder.durationSeconds;
         this.policyGenerator = builder.policyGenerator;
-        this.region = builder.region;
+        Region region = builder.region;
         this.role = builder.role;
 
         this.sts = StsClient.builder()
@@ -57,13 +57,18 @@ public class TokenVendor {
     public AwsCredentialsProvider vendToken() {
         String scopedPolicy = policyGenerator.generatePolicy();
 
-        return getCredentialsForTenant(scopedPolicy, policyGenerator.getTenant());
+        String tenant = policyGenerator.getTenant();
+        return getCredentialsForTenant(scopedPolicy, tenant);
     }
 
     private AwsCredentialsProvider getCredentialsForTenant(String scopedPolicy, String tenant) {
 
         StaticCredentialsProvider credentialsProvider;
         Credentials scopedCredentials;
+        if (scopedPolicy == null || scopedPolicy.trim().isEmpty()) {
+            LOGGER.info("CognitoTokenVendor::Attempting to assumeRole with empty policy, should not happen!");
+            throw new PolicyAssumptionException("Missing or empty policy, cannot allow access.");
+        }
         try {
             AssumeRoleResponse assumeRoleResponse = sts.assumeRole(assumeRoleReq -> assumeRoleReq
                     .durationSeconds(durationSeconds)

@@ -1,8 +1,47 @@
 ## Introduction 
 
-SaaS organizations leverage IAM Roles and Policies as the backbone of their tenant isolation policies. Dynamic Policy 
-Generation is a technique to ease the burden of static policy management. We will show an example implementation using
-Lambda to secure tenant resources in S3 and DynamoDB. 
+SaaS organizations leverage IAM Roles and Policies as the backbone of their tenant isolation strategies. Dynamic Policy 
+Generation is a technique to ease the burden of static policy management, while enforcing tenant isolation. 
+We will show an example implementation using AWS Lambda (Lambda) to access tenant specific resources on Amazon S3 (S3) 
+and Amazon DynamoDB (DynamoDB). The example will show how our policies allow access tenant specific resources, but 
+enforce our isolation boundary, denying access to other tenants' resources.
+
+The sample Lambda utilizes a Layer we call a Token Vending Machine to exchange the Identity Providers authentication 
+token, a [JWT](https://jwt.io/) in this example, for a fully scoped AWS Credential. This credential can only be 
+used to access the tenant specific resources we defined using permission templates for restricting access to:
+ 
+ 1. a tenant folder (or prefix) in S3
+ 2. DynamoDB records containing the tenant identifier as the leading key in a table
+ 
+The Token Vending Machine call will hydrate our templates with our tenant, extracted from the claims of our JWT, and
+any other fields required, and create an IAM Policy. The resulting policy will be passed to AWS Security Token 
+Service (STS), which will allow us to assume a IAM role, and return our fully scoped credential.
+
+The included sample utilizes Amazon Cognito as it's identity provider. A Cognito user pool will be set up to provide
+authentication of tenant users we will set up. However, take note that the Dynamic Policy Generation technique can
+work with a variety of Identity Provider, as long as we can derive tenant identity from their provided authentication token.
+
+## Architecture
+
+The sample includes three Lambdas which implement the Token Vending Machine concept. Each variation shows how a
+different architecture can achieve our token isolation goals. These are each exposed in a different endpoint they we
+will discuss below.
+
+### Code Authorization
+
+This diagram shows JWT verification and claims extraction implemented in our code.
+
+<p><kbd><img width=995 height=246 src="./images/Simple JWT Flow.png" alt="Simple JWT Flow"/></kbd></p>
+
+This diagram shows JWT verification and claims extraction implemented as a JWT Authenticator in the API Gateway.
+
+<p><kbd><img width=994 height=249 src="./images/API Gateway Authorizer Flow.png" alt="API Gateway Authorizer Flow"/></kbd></p>
+
+This diagram shows JWT verification and claims extraction implemented in our code, as well utilizing a Cognito 
+Identity Pool to retrieve a role.
+
+<p><kbd><img width=1002 height=319 src="./images/Cognito Identity Pool Flow.png" alt="Cognito Identity Pool Flow"/></kbd></p>
+
 
 ## Prerequisites
 
@@ -145,12 +184,12 @@ security.
 
 The templates included with this project include the following security strategies.
 
-* S3 - Bucket with Multiple Folders
-* DynamoDB - Table with tenant leading key
-* EFS - Access points tagged with tenant
-* Parameter Store - A parameter including tenant in path
-* Secret Manager - Secret tagged with the tenant
-* SQS - A queue with the tenant in the name
+* Amazon S3 - Bucket with Multiple Folders
+* Amazon DynamoDB - Table with tenant leading key
+* Amazon EFS - Access points tagged with tenant
+* AWS Systems Manager Parameter Store - A parameter including tenant in path
+* AWS Secret Manager - Secret tagged with the tenant
+* Amazon SQS - A queue with the tenant in the name
 
 Here is an example of a template for DynamoDB.
 
@@ -174,18 +213,35 @@ In this case, the **table** and **tenant** variables need to be fulfilled.
 
 ### Policy Engine
 
-An example implementation of a Token Vending Machine. This includes template resolution, STS role assumption, 
-and JWT and Cognito management.
+This module is the core functionality responsible for implementation of a Token Vending Machine. This includes:
+
+* Policy Generator - which loads Permission templates from a JAR file, and hydrates them with [Mustache](https://mustache.github.io/)
+* A JWT Claims Extractor - which utilizes Cognito to verify the token
+* Token Vendors - which are takes our generated policy and utilizes it for STS role assumption 
+  * TokenVendor - which just takes in a Policy Generator, creates the policy and passes it to STS
+  * JWTTokenVendor - which locates the tenant in the JWT in the Headers, creates the policy and passes it to STS
+  * CognitoTokenVendor - which locates the tenant and a Cognito Identity Pool identifier in the JWT in the Headers, 
+    creates the policy, obtains a IAM role from the Identity Pool, and passes the policy and role to STS
+* An optional Cognito Identity Pool implementation - to facilitate authorization flows using Identity Pools
 
 ### Token Vending Layer
 
-The lambda layer which abstracts the Token Vending Machine for the Lambdas that utilize it. From a callers perspective
+The lambda layer which abstracts Dynamic Policy Generation from the Lambdas that utilize it. From a callers' perspective
 interacting with this layer should be a single call:
 
     TokenVendingMachine tokenVendingMachine = new TokenVendingMachine();
     AwsCredentialsProvider tenantCredentials = tokenVendingMachine.vendToken(input);
     
-which takes in a JWT, and returns a fully scoped credential which can be used to call AWS services.
+which takes in a token containing our tenant, and returns a fully scoped credential which can be used to call AWS services.
+
+### Command Line Example
+
+A simple tool for testing Dynamic Policy Generation from the command line. This example doesn't use Cognito, or any
+other Identity Provider, so only the resources you want to secure need to exist in an AWS account for testing.
+
+[See the instructions here](command-line-example/README.md)
+
+This example contains code for testing all the Permission Templates included with this project.
 
 ## License
 

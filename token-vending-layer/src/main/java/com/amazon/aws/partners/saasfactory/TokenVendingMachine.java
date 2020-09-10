@@ -24,7 +24,7 @@ import com.amazon.aws.partners.saasfactory.policy.PolicyGenerator;
 import com.amazon.aws.partners.saasfactory.policy.DeclarativePolicyGenerator;
 import com.amazon.aws.partners.saasfactory.token.CognitoTokenVendor;
 import com.amazon.aws.partners.saasfactory.token.JwtTokenVendor;
-import com.amazon.aws.partners.saasfactory.token.StsTokenVendor;
+import com.amazon.aws.partners.saasfactory.token.TokenVendor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,12 +37,16 @@ public class TokenVendingMachine {
 
     private String tenant;
 
+    private static final String AWS_REGION = "AWS_REGION";
+    private static final String S3_BUCKET = "S3_BUCKET";
+    private static final String DB_TABLE = "DB_TABLE";
+
     public AwsCredentialsProvider vendCognitoToken(Map<String, String> headers) {
 
-        Region region = Region.of(System.getenv("AWS_REGION"));
+        Region region = Region.of(System.getenv(AWS_REGION));
 
-        String bucket = System.getenv("S3_BUCKET");
-        String table = System.getenv("DB_TABLE");
+        String bucket = System.getenv(S3_BUCKET);
+        String table = System.getenv(DB_TABLE);
 
         PolicyGenerator policyGenerator = DeclarativePolicyGenerator.generator()
                 .dynamoLeadingKey(table)
@@ -58,17 +62,17 @@ public class TokenVendingMachine {
         AwsCredentialsProvider awsCredentialsProvider = cognitoTokenVendor.vendToken();
         this.tenant = cognitoTokenVendor.getTenant();
 
-        LOGGER.info("Vending security token for tenant {}", tenant);
+        LOGGER.info("Vending Cognito security token for tenant {}", tenant);
 
         return awsCredentialsProvider;
     }
 
     public AwsCredentialsProvider vendToken(Map<String, String> headers, String role) {
 
-        Region region = Region.of(System.getenv("AWS_REGION"));
+        Region region = Region.of(System.getenv(AWS_REGION));
 
-        String bucket = System.getenv("S3_BUCKET");
-        String table = System.getenv("DB_TABLE");
+        String bucket = System.getenv(S3_BUCKET);
+        String table = System.getenv(DB_TABLE);
 
         PolicyGenerator policyGenerator = DeclarativePolicyGenerator.generator()
                 .dynamoLeadingKey(table)
@@ -85,17 +89,17 @@ public class TokenVendingMachine {
         AwsCredentialsProvider awsCredentialsProvider = jwtTokenVendor.vendToken();
         tenant = jwtTokenVendor.getTenant();
 
-        LOGGER.info("Vending security token for tenant {}", tenant);
+        LOGGER.info("Vending JWT security token for tenant {}", tenant);
 
         return awsCredentialsProvider;
     }
 
     public AwsCredentialsProvider vendTokenAuthorizer(Map<String, Object> authorizer, String role) {
 
-        Region region = Region.of(System.getenv("AWS_REGION"));
+        Region region = Region.of(System.getenv(AWS_REGION));
 
-        String bucket = System.getenv("S3_BUCKET");
-        String table = System.getenv("DB_TABLE");
+        String bucket = System.getenv(S3_BUCKET);
+        String table = System.getenv(DB_TABLE);
 
         Map<String, Object> claims = (Map<String, Object>) authorizer.get("claims");
         tenant = (String) claims.get("custom:tenant_id");
@@ -105,7 +109,7 @@ public class TokenVendingMachine {
                 .s3FolderPerTenant(bucket)
                 .tenant(tenant);
 
-        StsTokenVendor stsTokenVendor = StsTokenVendor.builder()
+        TokenVendor stsTokenVendor = TokenVendor.builder()
                 .policyGenerator(policyGenerator)
                 .durationSeconds(900)
                 .role(role)
