@@ -163,7 +163,7 @@ curl --location --request GET 'https://xxxxxxxxxx.execute-api.us-west-2.amazonaw
 --header "X-Tenant-ID: 123456789" --header 'Authorization: Bearer eyJr...bx2PaScA'
 ```
 
-(5) The curl examples have all utilized a single AWS Lambda. This Lambda, which has the path /"jwt-simple-flow", 
+(6) The curl examples have all utilized a single AWS Lambda. This Lambda, which has the path /"jwt-simple-flow", 
 utilizes code-based JWT authentication. This project also includes two other Lambdas which utilize other methods of 
 JWT Authentication. If you want to try the other methods out, use the paths below:
 
