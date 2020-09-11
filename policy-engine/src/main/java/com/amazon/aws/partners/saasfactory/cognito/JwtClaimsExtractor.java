@@ -40,12 +40,15 @@ public class JwtClaimsExtractor {
 
     public JwtClaimsExtractor() { }
 
-    public Map<String, Claim> getClaims(Map<String, String> request) {
+    public Map<String, Claim> getClaims(Map<String, String> request, boolean validateToken) {
         String bearerToken = getBearerToken(request);
         DecodedJWT unverifiedJWT = JWT.decode(bearerToken);
-        String issuer = unverifiedJWT.getIssuer();
-        DecodedJWT verifiedJWT = verify(bearerToken, issuer);
-        return verifiedJWT.getClaims();
+        if(validateToken) {
+            String issuer = unverifiedJWT.getIssuer();
+            DecodedJWT verifiedJWT = verify(bearerToken, issuer);
+            return verifiedJWT.getClaims();
+        }
+        return unverifiedJWT.getClaims();
     }
 
     public CognitoClaims getClaims(Map<String, String> request, String tenantClaim, String identityPoolClaim) {

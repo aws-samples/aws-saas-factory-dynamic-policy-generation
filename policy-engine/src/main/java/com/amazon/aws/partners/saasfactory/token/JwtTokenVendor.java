@@ -49,6 +49,7 @@ public class JwtTokenVendor {
     private final int durationSeconds;
     private final Map<String, String> headers;
     private final PolicyGenerator policyGenerator;
+    private boolean validateToken = true;
 
     public JwtTokenVendor(TokenVendorBuilder builder) {
         this.durationSeconds = builder.durationSeconds;
@@ -56,6 +57,9 @@ public class JwtTokenVendor {
         Region region = builder.region;
         this.role = builder.role;
         this.headers = builder.headers;
+        if(builder().validateToken) {
+            this.validateToken = builder.validateToken;
+        }
 
         this.sts = StsClient.builder()
                 .region(region)
@@ -67,7 +71,7 @@ public class JwtTokenVendor {
     public AwsCredentialsProvider vendToken() {
         try {
             JwtClaimsExtractor jwtClaimsExtractor = new JwtClaimsExtractor();
-            Map<String, Claim> claims = jwtClaimsExtractor.getClaims(headers);
+            Map<String, Claim> claims = jwtClaimsExtractor.getClaims(headers, validateToken);
             tenant = jwtClaimsExtractor.getTenantId(claims, TENANT_CLAIM);
         } catch (JWTVerificationException e) {
             LOGGER.info("Using an expired JWT Token.", e);
@@ -122,6 +126,7 @@ public class JwtTokenVendor {
         private int durationSeconds;
         private PolicyGenerator policyGenerator;
         private Map<String, String> headers;
+        private boolean validateToken;
 
         public TokenVendorBuilder() {
         }
@@ -148,6 +153,11 @@ public class JwtTokenVendor {
 
         public TokenVendorBuilder policyGenerator(PolicyGenerator policyGenerator) {
             this.policyGenerator = policyGenerator;
+            return this;
+        }
+
+        public TokenVendorBuilder validateToken(boolean validateToken) {
+            this.validateToken = validateToken;
             return this;
         }
 

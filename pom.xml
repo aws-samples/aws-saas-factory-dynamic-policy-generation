@@ -25,7 +25,7 @@
     <artifactId>aws-saas-factory-dynamic-policy-generation</artifactId>
     <packaging>pom</packaging>
     <version>1.0.0</version>
-    <name>Tenant Policy Project</name>
+    <name>AWS SaaS Factory Dynamic Policy Generation</name>
     <licenses>
         <license>
             <name>MIT No Attribution License (MIT-0)</name>

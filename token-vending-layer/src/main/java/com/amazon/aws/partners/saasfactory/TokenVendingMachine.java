@@ -31,6 +31,10 @@ import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 
+/**
+ * All of these examples are coded to just grant permissions to S3 and Dynamo DB. Your implementation needs to handle
+ * the different permutations of policy permissions your calling services require.
+ */
 public class TokenVendingMachine {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(TokenVendingMachine.class);
@@ -41,6 +45,15 @@ public class TokenVendingMachine {
     private static final String S3_BUCKET = "S3_BUCKET";
     private static final String DB_TABLE = "DB_TABLE";
 
+    /**
+     * Validates the JWT token with Cognito (our IdP in this example) in code using their Json Web Key Sets (JWKS),
+     * extracts the tenant and identity provider from the JWT claims
+     * calls Cognito Identity Provider to retrieve the IAM role
+     * and uses the tenant and role to vend the token.
+     *
+     * @param headers the HTTP headers which contain an authorization header.
+     * @return the scoped credentials
+     */
     public AwsCredentialsProvider vendCognitoToken(Map<String, String> headers) {
 
         Region region = Region.of(System.getenv(AWS_REGION));
@@ -67,6 +80,15 @@ public class TokenVendingMachine {
         return awsCredentialsProvider;
     }
 
+    /**
+     * Validates the JWT token with Cognito (our IdP in this example) in code using their Json Web Key Sets (JWKS),
+     * extracts the tenant from the JWT claims
+     * and uses the tenant to vend the token.
+     *
+     * @param headers the HTTP headers which contain an authorization header.
+     * @param role    the role to assume.
+     * @return the scoped credentials
+     */
     public AwsCredentialsProvider vendToken(Map<String, String> headers, String role) {
 
         Region region = Region.of(System.getenv(AWS_REGION));
@@ -94,6 +116,51 @@ public class TokenVendingMachine {
         return awsCredentialsProvider;
     }
 
+    /**
+     * Does not validate the JWT token with an IdP
+     * extracts the tenant from the JWT claims
+     * and uses the tenant to vend the token.
+     *
+     * @param headers the HTTP headers which contain an authorization header.
+     * @param role    the role to assume.
+     * @return the scoped credentials
+     */
+    public AwsCredentialsProvider vendTokenNoJwtValidation(Map<String, String> headers, String role) {
+
+        Region region = Region.of(System.getenv(AWS_REGION));
+
+        String bucket = System.getenv(S3_BUCKET);
+        String table = System.getenv(DB_TABLE);
+
+        PolicyGenerator policyGenerator = DeclarativePolicyGenerator.generator()
+                .dynamoLeadingKey(table)
+                .s3FolderPerTenant(bucket);
+
+        JwtTokenVendor jwtTokenVendor = JwtTokenVendor.builder()
+                .policyGenerator(policyGenerator)
+                .durationSeconds(900)
+                .headers(headers)
+                .role(role)
+                .region(region)
+                .validateToken(false)
+                .build();
+
+        AwsCredentialsProvider awsCredentialsProvider = jwtTokenVendor.vendToken();
+        tenant = jwtTokenVendor.getTenant();
+
+        LOGGER.info("Vending JWT security token for tenant {}", tenant);
+
+        return awsCredentialsProvider;
+    }
+
+    /**
+     * Expect the tenant to already be in the authorizer claims, since the API Gateway will have processed the JWT.
+     * uses the tenant to vend the token.
+     *
+     * @param authorizer the HTTP headers which contain an authorization header.
+     * @param role    the role to assume.
+     * @return the scoped credentials
+     */
     public AwsCredentialsProvider vendTokenAuthorizer(Map<String, Object> authorizer, String role) {
 
         Region region = Region.of(System.getenv(AWS_REGION));
