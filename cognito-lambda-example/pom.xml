@@ -23,7 +23,7 @@
 
     <artifactId>cognito-lambda-example</artifactId>
     <parent>
-        <artifactId>tenant-policy-project</artifactId>
+        <artifactId>aws-saas-factory-dynamic-policy-generation</artifactId>
         <groupId>com.amazon.aws.partners.saasfactory</groupId>
         <version>1.0.0</version>
     </parent>
