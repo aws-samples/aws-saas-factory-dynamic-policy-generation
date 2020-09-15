@@ -37,7 +37,7 @@ This diagram shows JWT verification and claims extraction implemented as a JWT A
 
 <p><kbd><img width=990 height=240 src="./images/API Gateway Authorizer Flow.png" alt="API Gateway Authorizer Flow"/></kbd></p>
 
-This diagram shows JWT verification and claims extraction implemented in our code, as well utilizing a Cognito 
+This diagram shows JWT verification and claims extraction implemented in our code, as well as utilizing a Cognito 
 Identity Pool to retrieve a role.
 
 <p><kbd><img width=1002 height=319 src="./images/Cognito Identity Pool Flow.png" alt="Cognito Identity Pool Flow"/></kbd></p>
@@ -61,8 +61,7 @@ cd aws-saas-factory-dynamic-policy-generation
 mvn
 ```
 
-(3) Upload the CloudFormation template, and the Lambda packages to your S3 bucket. You can use the AWS Console, 
-or the command line tools.
+(3) Upload the CloudFormation template, and the Lambda packages to your S3 bucket.
 
 ```shell
 BUCKET=name-of-your-s3-bucket
@@ -74,8 +73,8 @@ find . -type f \( -name '*lambda*.jar' -o -name '*layer*.jar' \) ! -name 'origin
 aws s3 cp cognito-lambda-example/cognito-user-role-bootstrap.yml s3://$BUCKET
 ```
 
-(4) Deploy the template using CloudFormation. You will need to enter the S3 Bucket you uploaded to above, and well as 
-a name for a new multi-tenant S3 bucket, and DynamoDB table named employee we will create for testing.
+(4) Deploy the template using CloudFormation. You will need to enter the S3 Bucket you uploaded to above, as well as 
+a name for a new multi-tenant S3 bucket, and a name for a DynamoDB table we will create for testing.
 You may find the AWS Console more convenient than the command line. Remember the stack name you choose, you'll need
 it in the next step.
 
@@ -89,7 +88,8 @@ This template will create the following resources
 * HTTP APIs 
 * A Cognito User Pool and Client
 * A Cognito Identity Pool
-* An IAM Role for the Identity Pool will allow our code to assume
+* An IAM Role for the Identity Pool, which our code to assume
+* An IAM Role for our code to look up by ARN and assume
 * An IAM Role allowing our Lambda to execute
 
 ## Testing the Example

@@ -49,7 +49,7 @@ public class JwtTokenVendor {
     private final int durationSeconds;
     private final Map<String, String> headers;
     private final PolicyGenerator policyGenerator;
-    private boolean validateToken = true;
+    private final boolean validateToken;
 
     public JwtTokenVendor(TokenVendorBuilder builder) {
         this.durationSeconds = builder.durationSeconds;
@@ -57,9 +57,7 @@ public class JwtTokenVendor {
         Region region = builder.region;
         this.role = builder.role;
         this.headers = builder.headers;
-        if(builder().validateToken) {
-            this.validateToken = builder.validateToken;
-        }
+        this.validateToken = builder.validateToken;
 
         this.sts = StsClient.builder()
                 .region(region)
@@ -126,7 +124,7 @@ public class JwtTokenVendor {
         private int durationSeconds;
         private PolicyGenerator policyGenerator;
         private Map<String, String> headers;
-        private boolean validateToken;
+        private boolean validateToken = true;
 
         public TokenVendorBuilder() {
         }
