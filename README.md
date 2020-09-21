@@ -53,7 +53,7 @@ CloudFormation templates.
 (1) You will need an S3 bucket in the same Region where you're going to deploy the sample. You can use an existing bucket 
 or create a new one.
 
-(2) Clone the repository and, using Maven (or your favorite IDE with Maven support), clean and package the 4 lambda projects.
+(2) Clone the repository and, using Maven (or your favorite IDE with Maven support), clean and package the parent project.
 
 ```shell
 git clone https://github.com/aws-samples/aws-saas-factory-dynamic-policy-generation.git aws-saas-factory-dynamic-policy-generation
