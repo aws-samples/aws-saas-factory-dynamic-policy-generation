@@ -59,7 +59,7 @@ CloudFormation templates.
 (1) You will need an S3 bucket in the same Region where you're going to deploy the sample. You can use an existing bucket 
 or create a new one.
 
-(2) Clone the repository and, using Maven (or your favorite IDE with Maven support), clean and package the 4 lambda projects.
+(2) Clone the repository and, using Maven (or your favorite IDE with Maven support), clean and package the parent project.
 
 ```shell
 git clone https://github.com/aws-samples/aws-saas-factory-dynamic-policy-generation.git aws-saas-factory-dynamic-policy-generation
@@ -136,8 +136,9 @@ The response will be the current count of records in S3 and Dynamo that are visi
 }
 ```
 
-(3) Now modify your curl command change the header to any value, --header "X-Tenant-ID: xxxxxxxxx". This will cause the
-code to attempt to retrieve items this tenant doesn't have access to.
+(3) Now modify your curl command change the X-Tenant-ID header to any value other than the actual tenant, 
+--header "X-Tenant-ID: xxxxxxxxx" for example. This will cause the code to attempt to retrieve items this tenant 
+doesn't have access to, and will return an error message.
 
 (4) Confirm the results in your S3 console. You should see folders for each of the tenants you created while testing. 
 The number of files in the folder matching the tenant your testing should match the number returned by the Lambda.
