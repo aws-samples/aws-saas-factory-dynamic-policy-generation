@@ -1,3 +1,9 @@
+## Purpose
+
+This sample is a companion to the [APN blog post](https://aws.amazon.com/blogs/apn/isolating-saas-tenants-with-dynamically-generated-iam-policies/)
+titled "Isolating SaaS Tenants with Dynamically Generated IAM Policies". While this sample can be executed standalone, 
+the purpose of this solution is to implement and provide and example of the concepts expressed in the blog above.
+
 ## Introduction 
 
 SaaS organizations leverage IAM Roles and Policies as the backbone of their tenant isolation strategies. Dynamic Policy 
@@ -84,7 +90,7 @@ This template will create the following resources
 * An S3 bucket for multi-tenant testing
 * A DynamoDB table for testing
 * Lambda Functions
-* A Lambda Layer
+* A Lambda Layer****
 * HTTP APIs 
 * A Cognito User Pool and Client
 * A Cognito Identity Pool
