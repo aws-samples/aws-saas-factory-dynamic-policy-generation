@@ -39,9 +39,8 @@ import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 
 /**
- * An example of the Lambda with Cognito integration. The Authorization header containing the
- * JWT is passed into the handler, which makes calls to Cognito API to get the openID token, as well as the
- * role from the Identity Pool and the tenant - a custom cognito property.
+ * JWT is verified against the deployment-controlled Cognito user pool and app client. The configured Identity Pool
+ * supplies the OpenID token and role, while the verified custom tenant claim scopes the generated policy.
  */
 public class CognitoIdentityPoolHandler implements RequestHandler<APIGatewayProxyRequestEvent, APIGatewayProxyResponseEvent> {
     private static final Logger LOGGER = LoggerFactory.getLogger(CognitoIdentityPoolHandler.class);

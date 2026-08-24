@@ -18,9 +18,9 @@
 package com.amazon.aws.partners.saasfactory.token;
 
 import com.amazon.aws.partners.saasfactory.cognito.JwtClaimsExtractor;
+import com.amazon.aws.partners.saasfactory.exception.JwtProcessingException;
 import com.amazon.aws.partners.saasfactory.exception.PolicyAssumptionException;
 import com.amazon.aws.partners.saasfactory.policy.PolicyGenerator;
-import com.auth0.jwt.exceptions.JWTVerificationException;
 import com.auth0.jwt.interfaces.Claim;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,54 +40,51 @@ import java.util.Map;
 public class JwtTokenVendor {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(JwtTokenVendor.class);
-
     private static final String TENANT_CLAIM = "custom:tenant_id";
 
     private final StsClient sts;
+    private final JwtClaimsExtractor jwtClaimsExtractor;
     private String tenant;
     private final String role;
     private final int durationSeconds;
     private final Map<String, String> headers;
     private final PolicyGenerator policyGenerator;
-    private final boolean validateToken;
 
     public JwtTokenVendor(TokenVendorBuilder builder) {
         this.durationSeconds = builder.durationSeconds;
         this.policyGenerator = builder.policyGenerator;
-        Region region = builder.region;
         this.role = builder.role;
         this.headers = builder.headers;
-        this.validateToken = builder.validateToken;
+        this.jwtClaimsExtractor = builder.jwtClaimsExtractor != null
+                ? builder.jwtClaimsExtractor
+                : new JwtClaimsExtractor(builder.trustedIssuer, builder.trustedAudience);
 
-        this.sts = StsClient.builder()
-                .region(region)
-                .httpClientBuilder(UrlConnectionHttpClient.builder())
-                .credentialsProvider(EnvironmentVariableCredentialsProvider.create())
-                .build();
+        this.sts = builder.stsClient != null
+                ? builder.stsClient
+                : StsClient.builder()
+                    .region(builder.region)
+                    .httpClientBuilder(UrlConnectionHttpClient.builder())
+                    .credentialsProvider(EnvironmentVariableCredentialsProvider.create())
+                    .build();
     }
 
     public AwsCredentialsProvider vendToken() {
         try {
-            JwtClaimsExtractor jwtClaimsExtractor = new JwtClaimsExtractor();
-            Map<String, Claim> claims = jwtClaimsExtractor.getClaims(headers, validateToken);
+            Map<String, Claim> claims = jwtClaimsExtractor.getClaims(headers);
             tenant = jwtClaimsExtractor.getTenantId(claims, TENANT_CLAIM);
-        } catch (JWTVerificationException e) {
-            LOGGER.info("Using an expired JWT Token.", e);
+        } catch (JwtProcessingException e) {
+            LOGGER.warn("JWT validation failed; STS will not be called.");
             throw new PolicyAssumptionException("Unable to verify your identity.");
         }
 
         policyGenerator.tenant(this.tenant);
         String scopedPolicy = policyGenerator.generatePolicy();
-
         return getCredentialsForTenant(scopedPolicy, tenant);
     }
 
-    public AwsCredentialsProvider getCredentialsForTenant(String scopedPolicy, String tenant) {
-
-        StaticCredentialsProvider credentialsProvider;
-        Credentials scopedCredentials;
+    private AwsCredentialsProvider getCredentialsForTenant(String scopedPolicy, String tenant) {
         if (scopedPolicy == null || scopedPolicy.trim().isEmpty()) {
-            LOGGER.info("CognitoTokenVendor::Attempting to assumeRole with empty policy, should not happen!");
+            LOGGER.info("Attempting to assumeRole with empty policy, should not happen!");
             throw new PolicyAssumptionException("Missing or empty policy, cannot allow access.");
         }
         try {
@@ -98,16 +95,15 @@ public class JwtTokenVendor {
                     .roleSessionName(tenant)
             );
 
-            scopedCredentials = assumeRoleResponse.credentials();
-            credentialsProvider = StaticCredentialsProvider.create(
-                    AwsSessionCredentials.create(scopedCredentials.accessKeyId(), scopedCredentials.secretAccessKey(), scopedCredentials.sessionToken())
-            );
+            Credentials scopedCredentials = assumeRoleResponse.credentials();
+            return StaticCredentialsProvider.create(AwsSessionCredentials.create(
+                    scopedCredentials.accessKeyId(),
+                    scopedCredentials.secretAccessKey(),
+                    scopedCredentials.sessionToken()));
         } catch (SdkServiceException stsError) {
             LOGGER.error("STS::AssumeRole", stsError);
             throw new RuntimeException(stsError);
         }
-
-        return credentialsProvider;
     }
 
     public String getTenant() {
@@ -124,10 +120,10 @@ public class JwtTokenVendor {
         private int durationSeconds;
         private PolicyGenerator policyGenerator;
         private Map<String, String> headers;
-        private boolean validateToken = true;
-
-        public TokenVendorBuilder() {
-        }
+        private String trustedIssuer;
+        private String trustedAudience;
+        private JwtClaimsExtractor jwtClaimsExtractor;
+        private StsClient stsClient;
 
         public TokenVendorBuilder role(String role) {
             this.role = role;
@@ -154,8 +150,23 @@ public class JwtTokenVendor {
             return this;
         }
 
-        public TokenVendorBuilder validateToken(boolean validateToken) {
-            this.validateToken = validateToken;
+        public TokenVendorBuilder trustedIssuer(String trustedIssuer) {
+            this.trustedIssuer = trustedIssuer;
+            return this;
+        }
+
+        public TokenVendorBuilder trustedAudience(String trustedAudience) {
+            this.trustedAudience = trustedAudience;
+            return this;
+        }
+
+        public TokenVendorBuilder jwtClaimsExtractor(JwtClaimsExtractor jwtClaimsExtractor) {
+            this.jwtClaimsExtractor = jwtClaimsExtractor;
+            return this;
+        }
+
+        public TokenVendorBuilder stsClient(StsClient stsClient) {
+            this.stsClient = stsClient;
             return this;
         }
 
