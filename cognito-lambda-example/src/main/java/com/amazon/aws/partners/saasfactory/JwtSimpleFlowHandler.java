@@ -22,8 +22,8 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * This version only evaluates the JWT to retrieve the tenant claim. We retrieve a role from the environmental
- * variables. This is a simple flow that doesn't require a OAuth flow with calls to Cognito.
+ * This flow validates a Cognito ID token against the deployment-controlled issuer and app client, then retrieves
+ * the tenant claim and vends scoped credentials for the configured role.
  */
 public class JwtSimpleFlowHandler implements RequestHandler<APIGatewayProxyRequestEvent, APIGatewayProxyResponseEvent> {
     private static final Logger LOGGER = LoggerFactory.getLogger(JwtSimpleFlowHandler.class);

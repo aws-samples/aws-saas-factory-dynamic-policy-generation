@@ -223,12 +223,12 @@ In this case, the **table** and **tenant** variables need to be fulfilled.
 This module is the core functionality responsible for implementation of a Token Vending Machine. This includes:
 
 * Policy Generator - which loads Permission templates from a JAR file, and hydrates them with [Mustache](https://mustache.github.io/)
-* A JWT Claims Extractor - which utilizes Cognito to verify the token
-* Token Vendors - which are takes our generated policy and utilizes it for STS role assumption 
+* A JWT Claims Extractor - which accepts only RS256 Cognito ID tokens matching the deployment-controlled user-pool issuer and app-client audience
+* Token Vendors - which take our generated policy and utilize it for STS role assumption
   * TokenVendor - which just takes in a Policy Generator, creates the policy and passes it to STS
-  * JWTTokenVendor - which locates the tenant in the JWT in the Headers, creates the policy and passes it to STS
-  * CognitoTokenVendor - which locates the tenant and a Cognito Identity Pool identifier in the JWT in the Headers, 
-    creates the policy, obtains a IAM role from the Identity Pool, and passes the policy and role to STS
+  * JWTTokenVendor - which locates the tenant in a verified JWT in the Headers, creates the policy and passes it to STS
+  * CognitoTokenVendor - which locates the tenant in a verified JWT in the Headers, uses the deployment-configured Cognito Identity Pool,
+    creates the policy, obtains an IAM role from the Identity Pool, and passes the policy and role to STS
 * An optional Cognito Identity Pool implementation - to facilitate authorization flows using Identity Pools
 
 ### Token Vending Layer

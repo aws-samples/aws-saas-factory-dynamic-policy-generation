@@ -20,9 +20,9 @@ package com.amazon.aws.partners.saasfactory.token;
 import com.amazon.aws.partners.saasfactory.cognito.CognitoClaims;
 import com.amazon.aws.partners.saasfactory.cognito.CognitoWebIdentityManager;
 import com.amazon.aws.partners.saasfactory.cognito.JwtClaimsExtractor;
+import com.amazon.aws.partners.saasfactory.exception.JwtProcessingException;
 import com.amazon.aws.partners.saasfactory.exception.PolicyAssumptionException;
 import com.amazon.aws.partners.saasfactory.policy.PolicyGenerator;
-import io.jsonwebtoken.ExpiredJwtException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
@@ -41,11 +41,11 @@ import java.util.Map;
 public class CognitoTokenVendor {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(CognitoTokenVendor.class);
-
     private static final String TENANT_CLAIM = "custom:tenant_id";
-    private static final String COGNITO_IDENTITY_POOL_CLAIM = "custom:identity_pool";
 
     private final StsClient sts;
+    private final JwtClaimsExtractor jwtClaimsExtractor;
+    private final String trustedIdentityPool;
     private String tenant;
     private final Region region;
     private final int durationSeconds;
@@ -57,6 +57,9 @@ public class CognitoTokenVendor {
         this.policyGenerator = builder.policyGenerator;
         this.region = builder.region;
         this.headers = builder.headers;
+        this.trustedIdentityPool = requireConfiguration(builder.trustedIdentityPool,
+                "Trusted Cognito identity pool ID");
+        this.jwtClaimsExtractor = new JwtClaimsExtractor(builder.trustedIssuer, builder.trustedAudience);
 
         this.sts = StsClient.builder()
                 .region(region)
@@ -66,24 +69,17 @@ public class CognitoTokenVendor {
     }
 
     public AwsCredentialsProvider vendToken() {
-
-        JwtClaimsExtractor jwtClaimsExtractor = new JwtClaimsExtractor();
-        CognitoClaims cognitoClaims = jwtClaimsExtractor.getClaims(headers, TENANT_CLAIM, COGNITO_IDENTITY_POOL_CLAIM);
-
-        String identityPool;
-        Map<String, String> providerLogins;
-
+        final CognitoClaims cognitoClaims;
         try {
-            identityPool = cognitoClaims.getIdentityPool();
-            providerLogins = cognitoClaims.getProviderLogins();
-            this.tenant = cognitoClaims.getTenant();
-            LOGGER.info("Injecting tenant {} from JWT.", tenant);
-        } catch (ExpiredJwtException e) {
-            LOGGER.info("Using an expired JWT Token.", e);
+            cognitoClaims = jwtClaimsExtractor.getClaims(headers, TENANT_CLAIM, trustedIdentityPool);
+        } catch (JwtProcessingException e) {
+            LOGGER.warn("JWT validation failed; Cognito and STS will not be called.");
             throw new PolicyAssumptionException("Unable to verify your identity.");
         }
 
-        LOGGER.info("Injecting tenant {} from JWT.", tenant);
+        String identityPool = cognitoClaims.getIdentityPool();
+        Map<String, String> providerLogins = cognitoClaims.getProviderLogins();
+        this.tenant = cognitoClaims.getTenant();
 
         CognitoWebIdentityManager cognitoWebIdentityManager = CognitoWebIdentityManager.builder()
                 .region(region)
@@ -96,19 +92,15 @@ public class CognitoTokenVendor {
 
         policyGenerator.tenant(this.tenant);
         String scopedPolicy = policyGenerator.generatePolicy();
-
         return getCredentialsForTenant(scopedPolicy, role, tenant, openIdToken);
     }
 
     AwsCredentialsProvider getCredentialsForTenant(String scopedPolicy,
-                                                           String role,
-                                                           String tenant,
-                                                           String openIdToken) {
-
-        StaticCredentialsProvider credentialsProvider;
-        Credentials scopedCredentials;
-        if(scopedPolicy == null || scopedPolicy.trim().isEmpty()) {
-            LOGGER.info("CognitoTokenVendor::Attempting to assumeRole with empty policy, should not happen!");
+                                                     String role,
+                                                     String tenant,
+                                                     String openIdToken) {
+        if (scopedPolicy == null || scopedPolicy.trim().isEmpty()) {
+            LOGGER.info("Attempting to assumeRole with empty policy, should not happen!");
             throw new PolicyAssumptionException("Missing or empty policy, cannot allow access.");
         }
         try {
@@ -120,16 +112,15 @@ public class CognitoTokenVendor {
                     .roleSessionName(tenant)
             );
 
-            scopedCredentials = assumeRoleResponse.credentials();
-            credentialsProvider = StaticCredentialsProvider.create(
-                    AwsSessionCredentials.create(scopedCredentials.accessKeyId(), scopedCredentials.secretAccessKey(), scopedCredentials.sessionToken())
-            );
+            Credentials scopedCredentials = assumeRoleResponse.credentials();
+            return StaticCredentialsProvider.create(AwsSessionCredentials.create(
+                    scopedCredentials.accessKeyId(),
+                    scopedCredentials.secretAccessKey(),
+                    scopedCredentials.sessionToken()));
         } catch (SdkServiceException stsError) {
             LOGGER.error("STS::AssumeRole", stsError);
             throw stsError;
         }
-
-        return credentialsProvider;
     }
 
     public static CognitoTokenVendorBuilder builder() {
@@ -140,11 +131,21 @@ public class CognitoTokenVendor {
         return tenant;
     }
 
+    private static String requireConfiguration(String value, String name) {
+        if (value == null || value.trim().isEmpty()) {
+            throw new JwtProcessingException(name + " must be configured.");
+        }
+        return value;
+    }
+
     public static final class CognitoTokenVendorBuilder {
         private Region region;
         private int durationSeconds;
         private PolicyGenerator policyGenerator;
         private Map<String, String> headers;
+        private String trustedIssuer;
+        private String trustedAudience;
+        private String trustedIdentityPool;
 
         private CognitoTokenVendorBuilder() {
         }
@@ -169,9 +170,23 @@ public class CognitoTokenVendor {
             return this;
         }
 
+        public CognitoTokenVendorBuilder trustedIssuer(String trustedIssuer) {
+            this.trustedIssuer = trustedIssuer;
+            return this;
+        }
+
+        public CognitoTokenVendorBuilder trustedAudience(String trustedAudience) {
+            this.trustedAudience = trustedAudience;
+            return this;
+        }
+
+        public CognitoTokenVendorBuilder trustedIdentityPool(String trustedIdentityPool) {
+            this.trustedIdentityPool = trustedIdentityPool;
+            return this;
+        }
+
         public CognitoTokenVendor build() {
             return new CognitoTokenVendor(this);
         }
     }
-
 }

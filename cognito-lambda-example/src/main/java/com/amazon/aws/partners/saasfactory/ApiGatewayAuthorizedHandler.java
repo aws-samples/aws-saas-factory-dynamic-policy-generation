@@ -22,12 +22,11 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * This version has an API Gateway the JWT to retrieve the tenant claim, and the tenant is in the RequestContext.
- * We retrieve a role from the environmental variables.
+ * API Gateway first validates the JWT, then this handler independently enforces the deployment-controlled Cognito
+ * issuer, app-client audience, RS256 algorithm, and ID-token use before vending scoped credentials.
  */
 public class ApiGatewayAuthorizedHandler implements RequestHandler<APIGatewayProxyRequestEvent, APIGatewayProxyResponseEvent> {
     private static final Logger LOGGER = LoggerFactory.getLogger(ApiGatewayAuthorizedHandler.class);
-
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @Override
@@ -36,13 +35,10 @@ public class ApiGatewayAuthorizedHandler implements RequestHandler<APIGatewayPro
 
         TokenVendingMachine tokenVendingMachine = new TokenVendingMachine();
         Map<String, String> headers = requestEvent.getHeaders();
-        APIGatewayProxyRequestEvent.ProxyRequestContext requestContext = requestEvent.getRequestContext();
-        Map<String, Object> authorizer = requestContext.getAuthorizer();
-        AwsCredentialsProvider tenantCredentials = tokenVendingMachine.vendTokenAuthorizer(authorizer, role);
+        AwsCredentialsProvider tenantCredentials = tokenVendingMachine.vendToken(headers, role);
         String tenant = tokenVendingMachine.getTenant();
 
         Region region = Region.of(System.getenv("AWS_REGION"));
-
         String bucket = System.getenv("S3_BUCKET");
         String table = System.getenv("DB_TABLE");
         String json = "{\"value\": \"test\"}";
@@ -53,7 +49,6 @@ public class ApiGatewayAuthorizedHandler implements RequestHandler<APIGatewayPro
 
         Map<String, String> map = new HashMap<>();
         map.put("tenant", tenant);
-
 
         try {
             S3ClientService s3ClientService = new S3ClientService(bucket, tenantCredentials);
@@ -92,10 +87,9 @@ public class ApiGatewayAuthorizedHandler implements RequestHandler<APIGatewayPro
     private String overrideJwtTokenForTestingIfHeaderPresent(Map<String, String> headers, String tenant) {
         String xTenant = headers.get("x-tenant-id");
         LOGGER.info("x-tenant-id {}", xTenant);
-        if(xTenant != null && !xTenant.trim().isEmpty()) {
+        if (xTenant != null && !xTenant.trim().isEmpty()) {
             return xTenant;
         }
         return tenant;
     }
-
 }

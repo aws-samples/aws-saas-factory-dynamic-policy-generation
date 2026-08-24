@@ -51,9 +51,6 @@ Resources:
         - Name: tenant_id
           AttributeDataType: String
           Mutable: false
-        - Name: identity_pool
-          AttributeDataType: String
-          Mutable: false
   UserPoolClient:
     Type: AWS::Cognito::UserPoolClient
     Properties:
@@ -74,11 +71,21 @@ Resources:
       AllowUnauthenticatedIdentities: false
       CognitoIdentityProviders:
         - ClientId: !Ref UserPoolClient
-          ProviderName: !Sub cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}
+          ProviderName: !Sub cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${UserPool}
           ServerSideTokenCheck: true
+  IdentityPoolPrincipalTags:
+    Type: AWS::Cognito::IdentityPoolPrincipalTag
+    Properties:
+      IdentityPoolId: !Ref IdentityPool
+      IdentityProviderName: !Sub cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${UserPool}
+      PrincipalTags:
+        tenant_id: "custom:tenant_id"
+      UseDefaults: false
   IdentityPoolRoles:
     Type: AWS::Cognito::IdentityPoolRoleAttachment
-    DependsOn: IdentityPoolAuthRole
+    DependsOn:
+      - IdentityPoolAuthRole
+      - IdentityPoolPrincipalTags
     Properties:
       IdentityPoolId: !Ref IdentityPool
       Roles:
@@ -87,6 +94,7 @@ Resources:
     Type: AWS::IAM::Role
     DependsOn:
       - IdentityPool
+      - IdentityPoolPrincipalTags
     Properties:
       RoleName: cognito-auth-role
       Path: '/'
@@ -97,6 +105,7 @@ Resources:
             Principal: {"Federated": "cognito-identity.amazonaws.com"}
             Action:
               - sts:AssumeRoleWithWebIdentity
+              - sts:TagSession
             Condition:
               StringEquals:
                 cognito-identity.amazonaws.com:aud:
@@ -110,13 +119,19 @@ Resources:
               - Effect: Allow
                 Action:
                   - s3:ListBucket
-                Resource: !Sub arn:aws:s3:::${MultiTenantS3Bucket}
+                Resource: !Sub arn:${AWS::Partition}:s3:::${MultiTenantS3Bucket}
+                Condition:
+                  StringLike:
+                    s3:prefix:
+                      - "${aws:PrincipalTag/tenant_id}"
+                      - "${aws:PrincipalTag/tenant_id}/"
+                      - "${aws:PrincipalTag/tenant_id}/*"
               - Effect: Allow
                 Action:
                   - s3:GetObject
                   - s3:PutObject
                   - s3:DeleteObject
-                Resource: !Sub arn:aws:s3:::${MultiTenantS3Bucket}/*
+                Resource: !Sub arn:${AWS::Partition}:s3:::${MultiTenantS3Bucket}/${!aws:PrincipalTag/tenant_id}/*
         - PolicyName: !Sub ${AWS::StackName}-dynamo-tenant-policy
           PolicyDocument:
             Version: 2012-10-17
@@ -127,27 +142,13 @@ Resources:
                   - dynamodb:PutItem
                   - dynamodb:BatchGetItem
                   - dynamodb:Query
-                  - dynamodb:DescribeTable
-                Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/*
-        - PolicyName: !Sub ${AWS::StackName}-sqs-tenant-policy
-          PolicyDocument:
-            Version: 2012-10-17
-            Statement:
-              - Effect: Allow
-                Action:
-                  - sqs:DeleteMessageBatch
-                  - sqs:SendMessageBatch
-                  - sqs:SendMessage
-                  - sqs:ReceiveMessage
-                Resource: !Sub arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:*
-        - PolicyName: !Sub ${AWS::StackName}-secretsmanager-tenant-policy
-          PolicyDocument:
-            Version: 2012-10-17
-            Statement:
-              - Effect: Allow
-                Action:
-                  - secretsmanager:GetSecretValue
-                Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*
+                Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoTableName}
+                Condition:
+                  ForAllValues:StringEquals:
+                    dynamodb:LeadingKeys:
+                      - "${aws:PrincipalTag/tenant_id}"
+                  Null:
+                    dynamodb:LeadingKeys: false
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -185,7 +186,7 @@ Resources:
                 Action:
                   - cognito-identity:GetIdentityPoolRoles
                 Resource:
-                  - !Sub arn:aws:cognito-identity:${AWS::Region}:${AWS::AccountId}:identitypool/*
+                  - !Sub arn:${AWS::Partition}:cognito-identity:${AWS::Region}:${AWS::AccountId}:identitypool/${IdentityPool}
   IamAuthRole:
     Type: AWS::IAM::Role
     Properties:
@@ -394,7 +395,7 @@ Resources:
       JwtConfiguration:
         Audience:
           - !Ref UserPoolClient
-        Issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}
+        Issuer: !Sub https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${UserPool}
       Name: serviceAuthorizer
   ApiGatewayAuthorizedLambdaFunction:
     Type: AWS::Lambda::Function
@@ -407,6 +408,8 @@ Resources:
           S3_BUCKET: !Ref MultiTenantS3Bucket
           DB_TABLE: !Ref DynamoTableName
           ROLE: !GetAtt IamAuthRole.Arn
+          TRUSTED_COGNITO_ISSUER: !Sub https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${UserPool}
+          TRUSTED_COGNITO_APP_CLIENT_ID: !Ref UserPoolClient
       Role: !GetAtt LambdaExecutionRole.Arn
       Handler: com.amazon.aws.partners.saasfactory.ApiGatewayAuthorizedHandler
       Timeout: 30
@@ -427,6 +430,8 @@ Resources:
           S3_BUCKET: !Ref MultiTenantS3Bucket
           DB_TABLE: !Ref DynamoTableName
           ROLE: !GetAtt IamAuthRole.Arn
+          TRUSTED_COGNITO_ISSUER: !Sub https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${UserPool}
+          TRUSTED_COGNITO_APP_CLIENT_ID: !Ref UserPoolClient
       Role: !GetAtt LambdaExecutionRole.Arn
       Handler: com.amazon.aws.partners.saasfactory.JwtSimpleFlowHandler
       Timeout: 30
@@ -445,6 +450,9 @@ Resources:
         Variables:
           S3_BUCKET: !Ref MultiTenantS3Bucket
           DB_TABLE: !Ref DynamoTableName
+          TRUSTED_COGNITO_ISSUER: !Sub https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${UserPool}
+          TRUSTED_COGNITO_APP_CLIENT_ID: !Ref UserPoolClient
+          TRUSTED_COGNITO_IDENTITY_POOL_ID: !Ref IdentityPool
       Role: !GetAtt LambdaExecutionRole.Arn
       Handler: com.amazon.aws.partners.saasfactory.CognitoIdentityPoolHandler
       Timeout: 30

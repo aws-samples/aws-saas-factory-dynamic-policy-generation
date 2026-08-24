@@ -21,6 +21,7 @@ import com.amazon.aws.partners.saasfactory.exception.JwtProcessingException;
 import com.auth0.jwt.JWT;
 import com.auth0.jwt.JWTVerifier;
 import com.auth0.jwt.algorithms.Algorithm;
+import com.auth0.jwt.exceptions.JWTDecodeException;
 import com.auth0.jwt.exceptions.JWTVerificationException;
 import com.auth0.jwt.interfaces.Claim;
 import com.auth0.jwt.interfaces.DecodedJWT;
@@ -28,42 +29,52 @@ import com.auth0.jwt.interfaces.RSAKeyProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.HashMap;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 
-public class JwtClaimsExtractor {
+public final class JwtClaimsExtractor {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(JwtClaimsExtractor.class);
-
     private static final Pattern BEARER_TOKEN_REGEX = Pattern.compile("^[B|b]earer +");
+    private static final Pattern TENANT_ID_REGEX = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$");
+    private static final String ID_TOKEN_USE = "id";
+    private static final String RS256 = "RS256";
 
-    public JwtClaimsExtractor() { }
+    private final String trustedIssuer;
+    private final String trustedAudience;
+    private final RSAKeyProvider keyProvider;
 
-    public Map<String, Claim> getClaims(Map<String, String> request, boolean validateToken) {
-        String bearerToken = getBearerToken(request);
-        DecodedJWT unverifiedJWT = JWT.decode(bearerToken);
-        if(validateToken) {
-            String issuer = unverifiedJWT.getIssuer();
-            DecodedJWT verifiedJWT = verify(bearerToken, issuer);
-            return verifiedJWT.getClaims();
-        }
-        return unverifiedJWT.getClaims();
+    public JwtClaimsExtractor(String trustedIssuer, String trustedAudience) {
+        this(trustedIssuer, trustedAudience, new CognitoRSAKeyProvider(requireConfiguration(
+                trustedIssuer, "Trusted Cognito issuer")));
     }
 
-    public CognitoClaims getClaims(Map<String, String> request, String tenantClaim, String identityPoolClaim) {
+    /**
+     * Allows callers and tests to supply a key provider while retaining all issuer, audience, algorithm,
+     * time-bound, and token-use checks.
+     */
+    public JwtClaimsExtractor(String trustedIssuer, String trustedAudience, RSAKeyProvider keyProvider) {
+        this.trustedIssuer = requireConfiguration(trustedIssuer, "Trusted Cognito issuer");
+        this.trustedAudience = requireConfiguration(trustedAudience, "Trusted Cognito app client ID");
+        if (keyProvider == null) {
+            throw new JwtProcessingException("A trusted RSA key provider is required.");
+        }
+        this.keyProvider = keyProvider;
+    }
+
+    public Map<String, Claim> getClaims(Map<String, String> request) {
+        return verify(getBearerToken(request)).getClaims();
+    }
+
+    public CognitoClaims getClaims(Map<String, String> request, String tenantClaim, String trustedIdentityPool) {
         String bearerToken = getBearerToken(request);
-        DecodedJWT unverifiedJWT = JWT.decode(bearerToken);
-        String issuer = unverifiedJWT.getIssuer();
-        DecodedJWT verifiedJWT = verify(bearerToken, issuer);
-        Map<String, Claim> claims = verifiedJWT.getClaims();
-        Map<String, String> providerLogins = getProviderLogins(claims, bearerToken, issuer);
-        String tenantId = getTenantId(claims, tenantClaim);
-        String identityPoolId = getIdentityPoolId(claims, identityPoolClaim);
+        Map<String, Claim> claims = verify(bearerToken).getClaims();
         return CognitoClaims.builder()
-                .identityPool(identityPoolId)
-                .providerLogins(providerLogins)
-                .tenant(tenantId)
+                .identityPool(requireConfiguration(trustedIdentityPool, "Trusted Cognito identity pool ID"))
+                .providerLogins(Collections.singletonMap(getTrustedProvider(), bearerToken))
+                .tenant(getTenantId(claims, tenantClaim))
                 .build();
     }
 
@@ -73,75 +84,79 @@ public class JwtClaimsExtractor {
         if (tenantClaim != null) {
             tenantId = tenantClaim.asString();
         }
-        if (tenantId == null) {
-            throw new JwtProcessingException("No tenant id in token");
+        if (tenantId == null || !TENANT_ID_REGEX.matcher(tenantId).matches()) {
+            throw new JwtProcessingException("Token tenant id is missing or contains unsafe characters.");
         }
         return tenantId;
     }
 
-    public String getIdentityPoolId(Map<String, Claim> claims, String claimName) {
-        String identityPoolId = null;
-        Claim identityPoolClaim = claims.get(claimName);
-        if (identityPoolClaim != null) {
-            identityPoolId = identityPoolClaim.asString();
-        }
-        if (identityPoolId == null || identityPoolId.isEmpty()) {
-            throw new JwtProcessingException("No Cognito Identity Pool ID in token");
-        }
-        return identityPoolId;
-    }
-
-    public Map<String, String> getProviderLogins(Map<String, Claim> claims , String bearerToken, String issuer) {
-        Map<String, String> logins = new HashMap<>();
-        String provider = issuer.replace("https://", "");
-        checkIdToken(claims);
-        logins.put(provider, bearerToken);
-        return logins;
-    }
-
-    private void checkIdToken(Map<String, Claim> claims) {
-        Claim tokenUseClaim = claims.get("token_use");
-        if (!"id".equals(tokenUseClaim.asString())) {
-            throw new JwtProcessingException("Request does not contain an ID Token");
-        }
+    private String getTrustedProvider() {
+        return trustedIssuer.substring("https://".length());
     }
 
     private String getBearerToken(Map<String, String> request) {
-        String jwt = null;
+        String bearerToken = null;
         if (request != null) {
-            String bearerToken = null;
             if (request.containsKey("Authorization")) {
                 bearerToken = request.get("Authorization");
             } else if (request.containsKey("authorization")) {
                 bearerToken = request.get("authorization");
-            } else {
-                LOGGER.error("Request does not contain an Authorization header");
-            }
-            if (bearerToken != null) {
-                String[] token = BEARER_TOKEN_REGEX.split(bearerToken);
-                if (token.length == 2 && !token[1].isEmpty()) {
-                    jwt = token[1];
-                } else {
-                    LOGGER.error("Authorization header does not contain Bearer token");
-                }
-            } else {
-                LOGGER.error("Request does not contain Authorization header");
             }
         }
-        return jwt;
+        if (bearerToken == null) {
+            throw new JwtProcessingException("Request does not contain an Authorization header.");
+        }
+
+        String[] token = BEARER_TOKEN_REGEX.split(bearerToken);
+        if (token.length != 2 || token[1].isEmpty()) {
+            throw new JwtProcessingException("Authorization header does not contain a Bearer token.");
+        }
+        return token[1];
     }
 
-    private DecodedJWT verify(String token, String issuer) {
+    private DecodedJWT verify(String token) {
+        DecodedJWT unverifiedJWT;
         try {
-            RSAKeyProvider keyProvider = new CognitoRSAKeyProvider(issuer);
+            unverifiedJWT = JWT.decode(token);
+        } catch (JWTDecodeException | IllegalArgumentException e) {
+            throw new JwtProcessingException("Unable to decode token.", e);
+        }
+
+        // These fail-fast checks prevent an untrusted issuer or algorithm from triggering a JWKS fetch.
+        // The same claims are required again by the cryptographic verifier below.
+        if (!trustedIssuer.equals(unverifiedJWT.getIssuer())) {
+            throw new JwtProcessingException("Token issuer does not match the trusted Cognito issuer.");
+        }
+        if (!RS256.equals(unverifiedJWT.getAlgorithm())) {
+            throw new JwtProcessingException("Token must use RS256.");
+        }
+        List<String> audience = unverifiedJWT.getAudience();
+        if (audience == null || audience.size() != 1 || !trustedAudience.equals(audience.get(0))) {
+            throw new JwtProcessingException("Token audience does not match the trusted Cognito app client ID.");
+        }
+        Claim tokenUse = unverifiedJWT.getClaim("token_use");
+        if (tokenUse == null || !ID_TOKEN_USE.equals(tokenUse.asString())) {
+            throw new JwtProcessingException("Request does not contain a Cognito ID token.");
+        }
+
+        try {
             Algorithm algorithm = Algorithm.RSA256(keyProvider);
             JWTVerifier verifier = JWT.require(algorithm)
+                    .withIssuer(trustedIssuer)
+                    .withAudience(trustedAudience)
+                    .withClaim("token_use", ID_TOKEN_USE)
                     .build();
             return verifier.verify(token);
-        } catch (JWTVerificationException e){
-            LOGGER.error("Failed to validate token with issuer.", e);
-            throw new JwtProcessingException("Failed to validate token with issuer.");
+        } catch (JWTVerificationException e) {
+            LOGGER.warn("Failed to validate token against the trusted Cognito configuration.");
+            throw new JwtProcessingException("Failed to validate token against the trusted Cognito configuration.", e);
         }
     }
 
+    private static String requireConfiguration(String value, String name) {
+        if (value == null || value.trim().isEmpty()) {
+            throw new JwtProcessingException(name + " must be configured.");
+        }
+        return value;
+    }
 }
