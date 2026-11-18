@@ -46,7 +46,14 @@ public class SecretsManagerClientService {
                     .secretId(secretName)
                     .build();
             getSecretValueResult = secretsManagerClient.getSecretValue(getSecretValueRequest);
-            LOGGER.info(getSecretValueResult.secretString());
+            // Do not log the secret value. This previously wrote
+            // getSecretValueResult.secretString() verbatim at INFO, putting whatever secret
+            // the tenant-scoped session was permitted to read into the application log.
+            // Log that retrieval succeeded instead -- the caller already holds the value.
+            LOGGER.info("Successfully retrieved secret '{}' ({} characters)", secretName,
+                    getSecretValueResult.secretString() == null
+                            ? 0
+                            : getSecretValueResult.secretString().length());
         } catch (SecretsManagerException e) {
             LOGGER.info(e.getLocalizedMessage());
         }
