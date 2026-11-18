@@ -8,7 +8,10 @@
       ],
       "Condition": {
         "ForAllValues:StringEquals": {
-          "dynamodb: LeadingKeys": [ "{{tenant}}" ]
+          "dynamodb:LeadingKeys": [ "{{tenant}}" ]
+        },
+        "Null": {
+          "dynamodb:LeadingKeys": "false"
         }
       }
     }
